@@ -18,7 +18,7 @@ services:
     env_file:
       - .env
     volumes:
-      - /root/court-bot/data:/app/data
+      - /root/tennis-reg-bot/data:/app/data
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     networks:
       - app_network
