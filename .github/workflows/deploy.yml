@@ -7,7 +7,7 @@ on:
 # Глобальные переменные для решения проблем с регистром и Node.js
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  IMAGE_NAME: sashazt/court-bot # Строго строчные буквы!
+  IMAGE_NAME: sashazt/tennis-reg-bot # Строго строчные буквы!
 
 jobs:
   build-and-push:
@@ -58,7 +58,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           source: "docker-compose.prod.yml"
-          target: "/root/court-bot"
+          target: "/root/tennis-reg-bot"
 
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@master
@@ -68,7 +68,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            cd /root/court-bot
+            cd /root/tennis-reg-bot
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u sashazt --password-stdin
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
