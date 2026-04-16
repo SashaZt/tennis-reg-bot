@@ -1,0 +1,36 @@
+# docker-compose.prod.yml — production, использует готовый образ из GHCR
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  tennis_bot:
+    image: ghcr.io/sashazt/tennis-reg-bot:latest
+    container_name: client_tg
+    restart: unless-stopped
+    environment:
+      - TZ=${PROJECT__TIMEZONE}
+      - PYTHONPATH=/app
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+    networks:
+      - app_network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+networks:
+  app_network:
+    driver: bridge
