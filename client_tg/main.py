@@ -1,6 +1,5 @@
 # main.py - с инициализацией loguru
 import asyncio
-import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -23,8 +22,6 @@ async def main():
     # Настройка логирования ПЕРВЫМ ДЕЛОМ
     logger.info("=== Запуск бота ===")
 
-    # Создаем директорию для базы данных
-    os.makedirs("data", exist_ok=True)
 
     # Инициализируем базу данных
     await init_database()

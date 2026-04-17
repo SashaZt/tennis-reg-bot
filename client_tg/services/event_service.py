@@ -1,5 +1,4 @@
 # services/event_service.py
-from datetime import datetime
 from typing import List, Optional
 
 from config.logger import logger
@@ -91,6 +90,7 @@ class EventService:
         async with get_db() as db:
             if current_month_only:
                 from datetime import date
+
                 month_pattern = date.today().strftime("%m.%Y")
                 async with db.execute(
                     "SELECT * FROM events WHERE created_by = ? AND event_date LIKE ? ORDER BY event_date, event_time",

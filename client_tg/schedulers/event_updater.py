@@ -1,6 +1,6 @@
 # services/event_updater.py
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
 
 from database.connection import get_db
@@ -130,8 +130,5 @@ class SimpleEventUpdater:
 
     def stop(self):
         """Остановить автообновление"""
-        self.is_running = False
-        logger.info("🛑 Автообновление событий остановлено")
-
         self.is_running = False
         logger.info("🛑 Автообновление событий остановлено")

@@ -1,5 +1,4 @@
 # database/connection.py
-import asyncio
 from pathlib import Path
 
 import aiosqlite

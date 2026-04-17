@@ -1,6 +1,6 @@
 # services/booking_service.py
-from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from datetime import datetime
+from typing import List, Tuple
 
 from database.connection import get_db
 from database.models import Booking

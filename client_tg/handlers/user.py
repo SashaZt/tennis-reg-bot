@@ -1,11 +1,11 @@
 # handlers/user.py
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import Message
 from keyboards.admin import AdminKeyboards
 from services.user_service import UserService
 
-from config import config, logger
+from config import config
 
 router = Router()
 

@@ -2,7 +2,6 @@
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from keyboards.inline import InlineKeyboards
 from services.booking_service import BookingService
 from services.event_service import EventService
 from services.user_service import UserService

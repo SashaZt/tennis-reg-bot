@@ -1,11 +1,10 @@
 # utils/formatters.py
-from datetime import datetime
 from typing import List
 
-from database.models import Booking, Event
+from database.models import Event
 from services.booking_service import BookingService
 
-from config import config, logger
+from config import config
 
 
 class MessageFormatter:

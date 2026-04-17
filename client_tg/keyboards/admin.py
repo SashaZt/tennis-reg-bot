@@ -149,4 +149,3 @@ class AdminKeyboards:
         )
         builder.adjust(1)
         return builder.as_markup()
-        return builder.as_markup()

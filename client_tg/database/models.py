@@ -1,6 +1,4 @@
 # database/models.py
-from datetime import datetime
-from typing import Dict, List, Optional
 
 from config import config
 

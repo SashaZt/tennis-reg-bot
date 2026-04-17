@@ -1,6 +1,5 @@
 # utils/group_formatters
 import re
-from typing import List
 
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
