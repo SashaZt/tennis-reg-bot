@@ -17,6 +17,7 @@ from utils.group_formatters import GroupMessageFormatter, escape_markdown_v2
 from utils.validators import Validators
 
 from config import config, logger
+from services.config_service import ConfigService
 
 router = Router()
 
@@ -42,6 +43,11 @@ class RecurringStates(StatesGroup):
     waiting_for_weekday = State()
     waiting_for_time = State()
     waiting_for_location = State()
+
+
+class SettingsStates(StatesGroup):
+    waiting_for_new_default_price = State()
+    waiting_for_new_location_name = State()
 
 
 @router.message(Command("admin"))
@@ -532,7 +538,8 @@ async def process_time(message: Message, state: FSMContext):
     await state.update_data(event_time=time_str)
     await state.set_state(CreateEventStates.waiting_for_location)
 
-    keyboard = AdminKeyboards.location_menu()
+    locations = await ConfigService.get_locations()
+    keyboard = AdminKeyboards.location_menu(locations)
     await message.answer(
         f"✅ Название: *{escape_markdown_v2(data['title'])}*\n"
         f"✅ Дата: *{escape_markdown_v2(event_date)}*\n"
@@ -553,21 +560,25 @@ async def process_location(callback: CallbackQuery, state: FSMContext):
 
     location_id = callback.data.split("_")[1]
 
-    if location_id not in config.locations:
+    locations = await ConfigService.get_locations()
+    if location_id not in locations:
         await callback.answer("❌ Неверная локация", show_alert=True)
         return
 
-    location = config.locations[location_id]
+    location = locations[location_id]
     data = await state.get_data()
+
+    default_price = await ConfigService.get_default_price()
 
     # Создаем событие
     user = await UserService.get_or_create_user(callback.from_user.id)
-    event = await EventService.create_event(
+    event = await EventService.create_event_with_price(
         title=data["title"],
         event_date=data["event_date"],
         event_time=data["event_time"],
         location=location,
         created_by=user.id,
+        price=default_price,
     )
 
     await state.clear()
@@ -1037,9 +1048,10 @@ async def recurring_process_time(message: Message, state: FSMContext):
         return
     await state.update_data(event_time=time_str)
     await state.set_state(RecurringStates.waiting_for_location)
+    locations = await ConfigService.get_locations()
     await message.answer(
         f"✅ Время: {time_str}\n\nВыберите место проведения:",
-        reply_markup=AdminKeyboards.location_menu(),
+        reply_markup=AdminKeyboards.location_menu(locations),
     )
 
 
@@ -1050,11 +1062,12 @@ async def recurring_process_location(callback: CallbackQuery, state: FSMContext)
     """Обработка выбора локации для шаблона (тот же callback location_<id>, но другое FSM-состояние)"""
     await callback.answer()
     location_id = callback.data.split("_")[1]
-    if location_id not in config.locations:
+    locations = await ConfigService.get_locations()
+    if location_id not in locations:
         await callback.answer("❌ Неверная локация", show_alert=True)
         return
 
-    location = config.locations[location_id]
+    location = locations[location_id]
     data = await state.get_data()
     await state.clear()
 
@@ -1074,6 +1087,114 @@ async def recurring_process_location(callback: CallbackQuery, state: FSMContext)
         f"📍 {template.location}\n\n"
         f"Тренировки будут создаваться автоматически каждую неделю.",
         reply_markup=AdminKeyboards.recurring_menu(),
+    )
+
+
+# ────────────────────────────────────────────────────────────────────
+#  НАСТРОЙКИ
+# ────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "admin_settings")
+async def admin_settings(callback: CallbackQuery):
+    """Главное меню настроек"""
+    await callback.answer()
+    default_price = await ConfigService.get_default_price()
+    locations = await ConfigService.get_locations()
+    await callback.message.edit_text(
+        "⚙️ Настройки бота\n\nИзмените цену по умолчанию или управляйте локациями:",
+        reply_markup=AdminKeyboards.settings_menu(default_price, locations),
+    )
+
+
+@router.callback_query(F.data == "settings_edit_price")
+async def settings_edit_price(callback: CallbackQuery, state: FSMContext):
+    """Запросить новую цену по умолчанию"""
+    await callback.answer()
+    await state.set_state(SettingsStates.waiting_for_new_default_price)
+
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_settings"))
+    await callback.message.edit_text(
+        "💰 Введите новую цену по умолчанию (только число, в злотых):",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(SettingsStates.waiting_for_new_default_price)
+async def process_new_default_price(message: Message, state: FSMContext):
+    try:
+        new_price = int(message.text.strip())
+        if new_price < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите корректное число (например: 90)")
+        return
+
+    await state.clear()
+    await ConfigService.set_default_price(new_price)
+    default_price = await ConfigService.get_default_price()
+    locations = await ConfigService.get_locations()
+    await message.answer(
+        f"✅ Цена по умолчанию обновлена: {new_price} злотых",
+        reply_markup=AdminKeyboards.settings_menu(default_price, locations),
+    )
+
+
+@router.callback_query(F.data == "settings_locations")
+async def settings_locations(callback: CallbackQuery):
+    """Список локаций с управлением"""
+    await callback.answer()
+    locations = await ConfigService.get_locations()
+    await callback.message.edit_text(
+        f"📍 Локации ({len(locations)})\n\nНажмите 🗑 чтобы удалить, или добавьте новую:",
+        reply_markup=AdminKeyboards.locations_manage_menu(locations),
+    )
+
+
+@router.callback_query(F.data == "settings_add_loc")
+async def settings_add_loc(callback: CallbackQuery, state: FSMContext):
+    """Запросить название новой локации"""
+    await callback.answer()
+    await state.set_state(SettingsStates.waiting_for_new_location_name)
+
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data="settings_locations"))
+    await callback.message.edit_text(
+        "📍 Введите название новой локации\n(например: Mokotowska 12, Warszawa):",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(SettingsStates.waiting_for_new_location_name)
+async def process_new_location(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 3:
+        await message.answer("❌ Название должно содержать минимум 3 символа")
+        return
+
+    await state.clear()
+    await ConfigService.add_location(name)
+    locations = await ConfigService.get_locations()
+    await message.answer(
+        f"✅ Локация добавлена: {name}",
+        reply_markup=AdminKeyboards.locations_manage_menu(locations),
+    )
+
+
+@router.callback_query(F.data.regexp(r"^settings_del_loc_\w+$"))
+async def settings_del_loc(callback: CallbackQuery):
+    """Удалить локацию по ключу"""
+    await callback.answer()
+    key = callback.data[len("settings_del_loc_"):]
+    deleted = await ConfigService.delete_location(key)
+    locations = await ConfigService.get_locations()
+
+    text = "✅ Локация удалена." if deleted else "❌ Локация не найдена."
+    text += f"\n\nЛокаций осталось: {len(locations)}"
+    await callback.message.edit_text(
+        text,
+        reply_markup=AdminKeyboards.locations_manage_menu(locations),
     )
 
 

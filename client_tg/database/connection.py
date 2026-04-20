@@ -79,6 +79,10 @@ async def init_database():
             ("notification_state", "ALTER TABLE events ADD COLUMN notification_state TEXT DEFAULT NULL"),
             ("recurring_template_id", "ALTER TABLE events ADD COLUMN recurring_template_id INTEGER REFERENCES recurring_templates(id)"),
             ("recurring_templates", "CREATE TABLE IF NOT EXISTS recurring_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, weekday INTEGER NOT NULL, event_time TEXT NOT NULL, location TEXT NOT NULL, price INTEGER DEFAULT 90, max_participants INTEGER DEFAULT 4, created_by INTEGER REFERENCES users(id), is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"),
+            ("config_settings", """CREATE TABLE IF NOT EXISTS config_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )"""),
         ]
         for name, sql in migrations:
             try:

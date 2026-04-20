@@ -41,7 +41,7 @@ class GroupMessageFormatter:
 🕐 Время: {safe_time}
 📍 Место: {safe_location}
 👥 Количество мест: {places_visual} \\({booking_count}/4\\)
-💰 Стоимость: {config.price} {config.currency}
+💰 Стоимость: {event.price} {config.currency}
 
 {safe_conditions}"""
 

@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from database.connection import init_database
+from services.config_service import ConfigService
 
 # Импортируем только нужные обработчики
 from handlers import admin, callback, group, user
@@ -25,6 +26,7 @@ async def main():
 
     # Инициализируем базу данных
     await init_database()
+    await ConfigService.seed_if_empty()
 
     # Инициализируем бота и диспетчер
     bot = Bot(

@@ -20,16 +20,19 @@ class AdminKeyboards:
             InlineKeyboardButton(
                 text="🔄 Повторяющиеся", callback_data="admin_recurring"
             ),
+            InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings"),
             InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
         )
         builder.adjust(1)
         return builder.as_markup()
 
     @staticmethod
-    def location_menu() -> InlineKeyboardMarkup:
-        """Меню выбора локации"""
+    def location_menu(locations: dict = None) -> InlineKeyboardMarkup:
+        """Меню выбора локации. Принимает locations из БД; fallback — config.json."""
+        if locations is None:
+            locations = config.locations
         builder = InlineKeyboardBuilder()
-        for location_id, location_name in config.locations.items():
+        for location_id, location_name in locations.items():
             builder.add(
                 InlineKeyboardButton(
                     text=f"📍 {location_name}", callback_data=f"location_{location_id}"
@@ -146,6 +149,44 @@ class AdminKeyboards:
             )
         builder.add(
             InlineKeyboardButton(text="◀️ Назад", callback_data="admin_recurring")
+        )
+        builder.adjust(1)
+        return builder.as_markup()
+
+    # ─── Настройки ───────────────────────────────────────────────────
+
+    @staticmethod
+    def settings_menu(default_price: int, locations: dict) -> InlineKeyboardMarkup:
+        """Главное меню настроек."""
+        builder = InlineKeyboardBuilder()
+        builder.add(
+            InlineKeyboardButton(
+                text=f"💰 Цена по умолч.: {default_price} зл.",
+                callback_data="settings_edit_price",
+            ),
+            InlineKeyboardButton(
+                text=f"📍 Локации ({len(locations)})",
+                callback_data="settings_locations",
+            ),
+            InlineKeyboardButton(text="◀️ Главное меню", callback_data="admin_main"),
+        )
+        builder.adjust(1)
+        return builder.as_markup()
+
+    @staticmethod
+    def locations_manage_menu(locations: dict) -> InlineKeyboardMarkup:
+        """Список локаций с кнопками удаления + кнопка добавить."""
+        builder = InlineKeyboardBuilder()
+        for key, name in locations.items():
+            builder.add(
+                InlineKeyboardButton(
+                    text=f"🗑 {name}",
+                    callback_data=f"settings_del_loc_{key}",
+                )
+            )
+        builder.add(
+            InlineKeyboardButton(text="➕ Добавить локацию", callback_data="settings_add_loc"),
+            InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings"),
         )
         builder.adjust(1)
         return builder.as_markup()
