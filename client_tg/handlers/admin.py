@@ -27,6 +27,7 @@ class CreateEventStates(StatesGroup):
     waiting_for_date = State()
     waiting_for_time = State()
     waiting_for_location = State()
+    waiting_for_price = State()
 
 
 class EditEventStates(StatesGroup):
@@ -156,7 +157,7 @@ async def show_admin_events(callback: CallbackQuery):
 
     try:
         await callback.message.edit_text(
-            message_text, reply_markup=builder.as_markup(), parse_mode="MarkdownV2"
+            message_text, reply_markup=builder.as_markup()
         )
     except Exception as e:
         logger.info(f"DEBUG: Ошибка при показе событий: {e}")
@@ -568,20 +569,48 @@ async def process_location(callback: CallbackQuery, state: FSMContext):
     location = locations[location_id]
     data = await state.get_data()
 
+    await state.update_data(location=location)
+    await state.set_state(CreateEventStates.waiting_for_price)
+
     default_price = await ConfigService.get_default_price()
 
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_cancel"))
+    await callback.message.edit_text(
+        f"✅ Название: {data['title']}\n"
+        f"✅ Дата: {data['event_date']}\n"
+        f"✅ Время: {data['event_time']}\n"
+        f"✅ Место: {location}\n\n"
+        f"💰 Введите цену тренировки (в злотых):\n"
+        f"(по умолчанию: {default_price} зл.)",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(CreateEventStates.waiting_for_price)
+async def process_event_price(message: Message, state: FSMContext):
+    """Обработка цены и создание события"""
+    try:
+        price = int(message.text.strip())
+        if price < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите корректное число (например: 90)")
+        return
+
+    data = await state.get_data()
+    await state.clear()
+
     # Создаем событие
-    user = await UserService.get_or_create_user(callback.from_user.id)
+    user = await UserService.get_or_create_user(message.from_user.id)
     event = await EventService.create_event_with_price(
         title=data["title"],
         event_date=data["event_date"],
         event_time=data["event_time"],
-        location=location,
+        location=data["location"],
         created_by=user.id,
-        price=default_price,
+        price=price,
     )
-
-    await state.clear()
 
     # Определяем топик по дню недели
 
@@ -616,10 +645,10 @@ async def process_location(callback: CallbackQuery, state: FSMContext):
         )
 
         # Отправляем сообщение в соответствующий топик
-        group_message = await callback.bot.send_message(
+        group_message = await message.bot.send_message(
             chat_id=config.group_id,
             text=group_message_text,
-            message_thread_id=topic_id,  # Это ключевой параметр для топика!
+            message_thread_id=topic_id,
             reply_markup=group_keyboard,
             parse_mode="MarkdownV2",
         )
@@ -629,43 +658,28 @@ async def process_location(callback: CallbackQuery, state: FSMContext):
         # Сохраняем ID сообщения в БД
         await EventService.update_group_message_id(event.id, group_message.message_id)
 
-        # Простое сообщение об успехе БЕЗ markdown
-        success_message = f"""✅ Событие создано и опубликовано!
+        success_message = (
+            f"✅ Событие создано и опубликовано!\n\n"
+            f"🎾 {event.title}\n"
+            f"📅 {event.event_date} ({topic_name})\n"
+            f"🕐 {event.event_time}\n"
+            f"📍 {event.location}\n"
+            f"💰 {price} злотых\n\n"
+            f"📨 Размещено в топике: {topic_name}\n"
+            f"🆔 ID события: {event.id}\n\n"
+            f"Пользователи смогут записываться через кнопки в группе."
+        )
 
-🎾 {event.title}
-📅 {event.event_date} ({topic_name})
-🕐 {event.event_time}
-📍 {location}
-
-📨 Размещено в топике: {topic_name}
-🆔 ID события: {event.id}
-
-Пользователи смогут записываться через кнопки в группе."""
-
-        await callback.message.edit_text(success_message)
+        await message.answer(success_message, reply_markup=AdminKeyboards.main_menu())
 
         logger.info(f"✅ Событие {event.id} успешно создано в топике {topic_id}")
 
     except Exception as e:
         logger.info(f"❌ Ошибка при создании события в топике: {e}")
-        logger.info(f"❌ Тип ошибки: {type(e)}")
-
-        # Максимально простое сообщение об ошибке
-        simple_error = f"Ошибка при публикации события. ID: {event.id}"
-
-        try:
-            await callback.message.edit_text(simple_error)
-        except Exception as e2:
-            logger.info(f"❌ Даже простое сообщение не отправляется: {e2}")
-            try:
-                # Последняя попытка - новое сообщение без форматирования
-                await callback.message.answer(f"Событие создано. ID: {event.id}")
-            except Exception as e3:
-                logger.info(f"❌ Критическая ошибка: {e3}")
-                # Хотя бы ответим на callback
-                await callback.answer(
-                    f"Событие создано! ID: {event.id}", show_alert=True
-                )
+        await message.answer(
+            f"⚠️ Событие создано (ID: {event.id}), но ошибка при публикации в группу: {e}",
+            reply_markup=AdminKeyboards.main_menu(),
+        )
 
 
 @router.callback_query(F.data == "admin_cancel")
