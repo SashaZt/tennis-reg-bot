@@ -22,6 +22,27 @@ from services.config_service import ConfigService
 router = Router()
 
 
+async def _refresh_group_announcement(bot, event_id: int) -> None:
+    """Обновить объявление события в группе после редактирования."""
+    from services.event_service import EventService as _ES
+    event = await _ES.get_event_by_id(event_id)
+    if not event or not event.group_message_id:
+        return
+    try:
+        text = await GroupMessageFormatter.format_group_event_message(event)
+        keyboard = GroupMessageFormatter.create_group_keyboard(event.id)
+        await bot.edit_message_text(
+            chat_id=config.group_id,
+            message_id=event.group_message_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="MarkdownV2",
+        )
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            logger.warning(f"⚠️ Не удалось обновить объявление события {event_id}: {e}")
+
+
 class CreateEventStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_date = State()
@@ -33,6 +54,8 @@ class CreateEventStates(StatesGroup):
 class EditEventStates(StatesGroup):
     waiting_for_new_title = State()
     waiting_for_new_price = State()
+    waiting_for_new_date = State()
+    waiting_for_new_time = State()
 
 
 class GatherChatStates(StatesGroup):
@@ -122,34 +145,23 @@ async def show_admin_events(callback: CallbackQuery):
     await callback.answer()
 
     user = await UserService.get_or_create_user(callback.from_user.id)
-    events = await EventService.get_events_by_creator(user.id, current_month_only=True)
+    dates = await EventService.get_active_dates_by_creator(user.id)
 
-    if not events:
-        try:
-            await callback.message.edit_text(
-                "📋 У вас нет событий в текущем месяце\n\n"
-                "Используйте кнопку ➕ Создать событие",
-                reply_markup=AdminKeyboards.main_menu(),
-            )
-        except Exception as e:
-            logger.info(f"DEBUG: Ошибка при редактировании: {e}")
-            await callback.message.answer(
-                "📋 У вас нет созданных событий\n\n"
-                "Используйте кнопку ➕ Создать событие"
-            )
+    if not dates:
+        await callback.message.edit_text(
+            "📋 У вас нет активных событий\n\nИспользуйте ➕ Создать событие",
+            reply_markup=AdminKeyboards.main_menu(),
+        )
         return
 
-    events_page = events[:10]
-    message_text = MessageFormatter.format_admin_event_list(events_page)
-
-    # Создаем кнопки для управления событиями
     builder = InlineKeyboardBuilder()
-    for event in events_page:
-        booking_count = await BookingService.get_booking_count(event.id)
+    for date_str in dates:
+        events_on_date = await EventService.get_events_by_date(user.id, date_str)
+        count = len(events_on_date)
         builder.add(
             InlineKeyboardButton(
-                text=f"🏋️‍♂️ {event.title} ({booking_count}/4)",
-                callback_data=f"admin_event_{event.id}",
+                text=f"📅 {date_str}  —  {count} {'событие' if count == 1 else 'события' if count < 5 else 'событий'}",
+                callback_data=f"admin_date_{date_str.replace('.', '_')}",
             )
         )
     builder.add(InlineKeyboardButton(text="◀️ Назад", callback_data="admin_main"))
@@ -157,10 +169,60 @@ async def show_admin_events(callback: CallbackQuery):
 
     try:
         await callback.message.edit_text(
-            message_text, reply_markup=builder.as_markup()
+            "📋 Выберите дату:", reply_markup=builder.as_markup()
         )
     except Exception as e:
-        logger.info(f"DEBUG: Ошибка при показе событий: {e}")
+        logger.info(f"DEBUG: Ошибка при показе дат: {e}")
+
+
+@router.callback_query(F.data.regexp(r"^admin_date_\d{2}_\d{2}_\d{4}$"))
+async def show_events_by_date(callback: CallbackQuery):
+    """Показать все события на выбранную дату в виде карточек"""
+    await callback.answer()
+
+    raw = callback.data[len("admin_date_"):]          # "20_04_2026"
+    date_str = raw.replace("_", ".")                  # "20.04.2026"
+
+    user = await UserService.get_or_create_user(callback.from_user.id)
+    events = await EventService.get_events_by_date(user.id, date_str)
+
+    if not events:
+        await callback.message.edit_text(
+            f"📭 На {date_str} событий нет",
+            reply_markup=InlineKeyboardBuilder().add(
+                InlineKeyboardButton(text="◀️ Назад", callback_data="admin_my_events")
+            ).as_markup(),
+        )
+        return
+
+    lines = [f"📅 События на {date_str}\n"]
+    for event in events:
+        count = await BookingService.get_booking_count(event.id)
+        squares = "".join(
+            "🟩" if i < count and count >= 3 else "🟥" if i < count else "⬜️"
+            for i in range(4)
+        )
+        lines.append(
+            f"🎾 {event.title}\n"
+            f"🕐 {event.event_time}  📍 {event.location}\n"
+            f"👥 {squares} ({count}/4)  💰 {event.price} зл.\n"
+        )
+
+    builder = InlineKeyboardBuilder()
+    for event in events:
+        count = await BookingService.get_booking_count(event.id)
+        builder.add(
+            InlineKeyboardButton(
+                text=f"⚙️ {event.title} ({event.event_time}) — {count}/4",
+                callback_data=f"admin_event_{event.id}",
+            )
+        )
+    builder.add(InlineKeyboardButton(text="◀️ К датам", callback_data="admin_my_events"))
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "\n".join(lines), reply_markup=builder.as_markup()
+    )
 
 
 @router.callback_query(F.data == "admin_stats")
@@ -278,9 +340,8 @@ async def admin_event_detail(callback: CallbackQuery):
             else:
                 message_text += f"{i}\\. Пользователь ID: {booking.user_id}\n"
 
-        # Добавляем общий доход
-        total_income = len(bookings) * 90
-        message_text += f"\n💰 **Общий доход: {total_income} злотых**"
+        total_income = len(bookings) * event.price
+        message_text += f"\n💰 Общий доход: {total_income} злотых"
     else:
         message_text += "\n\n👥 **Участники:** Пока никто не записался"
 
@@ -293,38 +354,24 @@ async def admin_event_detail(callback: CallbackQuery):
             text="🗑 Удалить", callback_data=f"admin_delete_{event_id}"
         ),
         InlineKeyboardButton(
+            text="🔁 Переопубликовать", callback_data=f"republish_event_{event_id}"
+        ),
+        InlineKeyboardButton(
             text="📱 Собрать в чате", callback_data=f"gather_chat_{event_id}"
         ),
         InlineKeyboardButton(text="◀️ Назад", callback_data="admin_my_events"),
     )
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1, 1, 1)
 
+    clean_text = message_text.replace("**", "").replace("*", "").replace("`", "")
     try:
         await callback.message.edit_text(
-            f"🔧 **Управление событием**\n\n{message_text}",
+            f"🔧 Управление событием\n\n{clean_text}",
             reply_markup=builder.as_markup(),
-            parse_mode="MarkdownV2",
         )
-        logger.info("DEBUG: Сообщение успешно отправлено")
     except Exception as e:
         logger.info(f"DEBUG: Ошибка при показе деталей события: {e}")
-        # Если проблема с markdown, отправляем без разметки
-        try:
-            # Убираем всю markdown разметку
-            clean_text = (
-                message_text.replace("**", "").replace("*", "").replace("`", "")
-            )
-            # clean_text = message_text.replace('**', '').replace('*', '').replace('_', '').replace('`', '')
-            await callback.message.edit_text(
-                f"🔧 Управление событием\n\n{clean_text}",
-                reply_markup=builder.as_markup(),
-            )
-            logger.info("DEBUG: Сообщение отправлено без markdown")
-        except Exception as e2:
-            logger.info(f"DEBUG: Критическая ошибка: {e2}")
-            await callback.answer(
-                "❌ Произошла ошибка при отображении", show_alert=True
-            )
+        await callback.answer("❌ Произошла ошибка при отображении", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("admin_participants_"))
@@ -370,7 +417,9 @@ async def show_participants(callback: CallbackQuery):
         else:
             participants_text += f"{i}. Пользователь ID: {booking.user_id}\n\n"
 
-    participants_text += f"💰 **Общий доход: {len(bookings) * 90} злотых**"
+    event = await EventService.get_event_by_id(event_id)
+    price = event.price if event else 90
+    participants_text += f"💰 Общий доход: {len(bookings) * price} злотых"
 
     await callback.message.answer(participants_text, parse_mode="MarkdownV2")
 
@@ -682,6 +731,58 @@ async def process_event_price(message: Message, state: FSMContext):
         )
 
 
+@router.callback_query(F.data.regexp(r"^republish_event_\d+$"))
+async def republish_event(callback: CallbackQuery):
+    """Заново опубликовать объявление события в группу"""
+    await callback.answer()
+    event_id = int(callback.data.split("_")[2])
+    event = await EventService.get_event_by_id(event_id)
+
+    if not event:
+        await callback.answer("❌ Событие не найдено", show_alert=True)
+        return
+
+    # Удалить старое сообщение из группы если оно есть
+    if event.group_message_id:
+        try:
+            await callback.bot.delete_message(
+                chat_id=config.group_id,
+                message_id=event.group_message_id,
+            )
+        except Exception:
+            pass  # сообщение уже удалено или недоступно
+
+    is_kids = "дет" in event.title.lower() or "ребенок" in event.title.lower()
+    topic_id = get_topic_id_for_date(event.event_date, is_kids=is_kids)
+    weekday_name = get_weekday_name(event.event_date)
+    topic_name = "Тренировка для детей" if is_kids else f"Тренировка {weekday_name}"
+
+    try:
+        group_message_text = await GroupMessageFormatter.format_group_event_message(event)
+        group_keyboard = GroupMessageFormatter.create_group_keyboard(event.id)
+
+        group_message = await callback.bot.send_message(
+            chat_id=config.group_id,
+            text=group_message_text,
+            message_thread_id=topic_id,
+            reply_markup=group_keyboard,
+            parse_mode="MarkdownV2",
+        )
+        await EventService.update_group_message_id(event.id, group_message.message_id)
+
+        await callback.message.edit_text(
+            f"✅ Объявление переопубликовано!\n\n"
+            f"🎾 {event.title}\n"
+            f"📅 {event.event_date} в {event.event_time}\n"
+            f"📍 {event.location}\n"
+            f"📨 Топик: {topic_name}",
+            reply_markup=AdminKeyboards.main_menu(),
+        )
+    except Exception as e:
+        logger.error(f"❌ Ошибка переопубликации события {event_id}: {e}")
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+
 @router.callback_query(F.data == "admin_cancel")
 async def cancel_action(callback: CallbackQuery, state: FSMContext):
     """Отмена действия"""
@@ -729,6 +830,7 @@ async def process_new_title(message: Message, state: FSMContext):
     await state.clear()
 
     await EventService.update_event_field(event_id, "title", new_title)
+    await _refresh_group_announcement(message.bot, event_id)
     await message.answer(
         f"✅ Название обновлено: {new_title}", reply_markup=AdminKeyboards.main_menu()
     )
@@ -771,9 +873,130 @@ async def process_new_price(message: Message, state: FSMContext):
     await state.clear()
 
     await EventService.update_event_field(event_id, "price", new_price)
+    await _refresh_group_announcement(message.bot, event_id)
     await message.answer(
         f"✅ Цена обновлена: {new_price} злотых",
         reply_markup=AdminKeyboards.main_menu(),
+    )
+
+
+# ────────────────────────────────────────────────────────────────────
+#  РЕДАКТИРОВАНИЕ: ДАТА
+# ────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data.regexp(r"^edit_date_\d+$"))
+async def start_edit_date(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    event_id = int(callback.data.split("_")[2])
+    await state.set_state(EditEventStates.waiting_for_new_date)
+    await state.update_data(event_id=event_id)
+
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_edit_{event_id}"))
+    await callback.message.edit_text(
+        "📅 Введите новую дату в формате ДД.ММ.ГГГГ\nНапример: 25.04.2026",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(EditEventStates.waiting_for_new_date)
+async def process_new_date(message: Message, state: FSMContext):
+    date_str = message.text.strip()
+    if not Validators.validate_date(date_str):
+        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ, например: 25.04.2026")
+        return
+
+    data = await state.get_data()
+    event_id = data["event_id"]
+    await state.clear()
+
+    await EventService.update_event_field(event_id, "event_date", date_str)
+    await _refresh_group_announcement(message.bot, event_id)
+    await message.answer(f"✅ Дата обновлена: {date_str}", reply_markup=AdminKeyboards.main_menu())
+
+
+# ────────────────────────────────────────────────────────────────────
+#  РЕДАКТИРОВАНИЕ: ВРЕМЯ
+# ────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data.regexp(r"^edit_time_\d+$"))
+async def start_edit_time(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    event_id = int(callback.data.split("_")[2])
+    await state.set_state(EditEventStates.waiting_for_new_time)
+    await state.update_data(event_id=event_id)
+
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_edit_{event_id}"))
+    await callback.message.edit_text(
+        "🕐 Введите новое время в формате ЧЧ:ММ\nНапример: 19:00",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(EditEventStates.waiting_for_new_time)
+async def process_new_time(message: Message, state: FSMContext):
+    time_str = message.text.strip()
+    if not Validators.validate_time(time_str):
+        await message.answer("❌ Неверный формат. Используйте ЧЧ:ММ, например: 19:00")
+        return
+
+    data = await state.get_data()
+    event_id = data["event_id"]
+    await state.clear()
+
+    await EventService.update_event_field(event_id, "event_time", time_str)
+    await _refresh_group_announcement(message.bot, event_id)
+    await message.answer(f"✅ Время обновлено: {time_str}", reply_markup=AdminKeyboards.main_menu())
+
+
+# ────────────────────────────────────────────────────────────────────
+#  РЕДАКТИРОВАНИЕ: МЕСТО
+# ────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data.regexp(r"^edit_location_\d+$"))
+async def start_edit_location(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    event_id = int(callback.data.split("_")[2])
+    await state.update_data(event_id=event_id)
+
+    locations = await ConfigService.get_locations()
+    builder = InlineKeyboardBuilder()
+    for loc_id, loc_name in locations.items():
+        builder.add(InlineKeyboardButton(
+            text=f"📍 {loc_name}",
+            callback_data=f"edit_loc_select_{loc_id}_{event_id}",
+        ))
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_edit_{event_id}"))
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "📍 Выберите новое место проведения:", reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.regexp(r"^edit_loc_select_\w+_\d+$"))
+async def process_edit_location(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    parts = callback.data.split("_")
+    # edit_loc_select_{loc_id}_{event_id}  → parts: ['edit','loc','select', loc_id, event_id]
+    event_id = int(parts[-1])
+    loc_id = parts[-2]
+
+    locations = await ConfigService.get_locations()
+    location = locations.get(loc_id)
+    if not location:
+        await callback.answer("❌ Локация не найдена", show_alert=True)
+        return
+
+    await state.clear()
+    await EventService.update_event_field(event_id, "location", location)
+    await _refresh_group_announcement(callback.bot, event_id)
+    await callback.message.edit_text(
+        f"✅ Место обновлено: {location}", reply_markup=AdminKeyboards.main_menu()
     )
 
 
@@ -850,6 +1073,7 @@ async def kick_user_from_event(callback: CallbackQuery):
         except Exception:
             pass  # пользователь мог не начать диалог с ботом
 
+    await _refresh_group_announcement(callback.bot, event_id)
     await callback.message.edit_text(
         "✅ Участник удалён из тренировки",
         reply_markup=AdminKeyboards.edit_menu(event_id),

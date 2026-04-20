@@ -106,6 +106,29 @@ class EventService:
             return [Event(*row[:12]) for row in rows]
 
     @staticmethod
+    async def get_active_dates_by_creator(creator_id: int) -> List[str]:
+        """Вернуть список уникальных дат активных событий (sorted)"""
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT DISTINCT event_date FROM events WHERE created_by = ? AND is_active = TRUE "
+                "ORDER BY substr(event_date,7,4), substr(event_date,4,2), substr(event_date,1,2)",
+                (creator_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row[0] for row in rows]
+
+    @staticmethod
+    async def get_events_by_date(creator_id: int, event_date: str) -> List[Event]:
+        """Все активные события на конкретную дату"""
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT * FROM events WHERE created_by = ? AND event_date = ? AND is_active = TRUE ORDER BY event_time",
+                (creator_id, event_date),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [Event(*row[:12]) for row in rows]
+
+    @staticmethod
     async def update_group_message_id(event_id: int, group_message_id: int):
         """Обновить ID сообщения в группе"""
         async with get_db() as db:
