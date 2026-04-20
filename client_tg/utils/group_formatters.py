@@ -55,20 +55,15 @@ class GroupMessageFormatter:
                 for i, booking in enumerate(bookings, 1):
                     user = await UserService.get_user_by_id(booking.user_id)
                     if user:
+                        name_parts = []
+                        if user.first_name:
+                            name_parts.append(escape_markdown_v2(user.first_name))
+                        if user.last_name:
+                            name_parts.append(escape_markdown_v2(user.last_name))
+                        display_name = " ".join(name_parts) if name_parts else escape_markdown_v2(str(user.telegram_id))
                         if user.username:
-                            # Экранируем username для MarkdownV2
-                            display_name = escape_markdown_v2(f"@{user.username}")
-                        else:
-                            name_parts = []
-                            if user.first_name:
-                                name_parts.append(escape_markdown_v2(user.first_name))
-                            if user.last_name:
-                                name_parts.append(escape_markdown_v2(user.last_name))
-                            display_name = (
-                                " ".join(name_parts)
-                                if name_parts
-                                else f"ID:{user.telegram_id}"
-                            )
+                            safe_username = escape_markdown_v2(user.username)
+                            display_name += f" \\(@{safe_username}\\)"
 
                         message += f"{i}\\. {display_name}\n"
                     else:
@@ -136,8 +131,8 @@ def escape_markdown_v2(text: str) -> str:
     if not text:
         return ""
 
-    # Список специальных символов MarkdownV2
-    escape_chars = r"([_*[\]()~`>#+-=|{}.!\\])"
+    # Список специальных символов MarkdownV2 (дефис в конце, иначе +-= = диапазон с цифрами)
+    escape_chars = r"([_*\[\]()~`>#+=|{}.!\\-])"
 
     # Экранируем специальные символы
     text = re.sub(escape_chars, r"\\\1", text)

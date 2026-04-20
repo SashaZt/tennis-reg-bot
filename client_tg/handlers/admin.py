@@ -22,6 +22,52 @@ from services.config_service import ConfigService
 router = Router()
 
 
+async def _publish_recurring_event_now(bot, template, creator_id: int) -> str | None:
+    """Создать и опубликовать первое событие по шаблону на ближайший подходящий день."""
+    from datetime import date, timedelta
+    try:
+        # Ближайшая дата с нужным днём недели начиная с завтра
+        start = date.today() + timedelta(days=1)
+        days_until = (template.weekday - start.weekday()) % 7
+        next_date = start + timedelta(days=days_until)
+        date_str = next_date.strftime("%d.%m.%Y")
+
+        # Не создавать если уже есть
+        exists = await EventService.event_exists_for_template(template.id, date_str)
+        if exists:
+            return date_str
+
+        event = await EventService.create_event_with_price(
+            title=template.title,
+            event_date=date_str,
+            event_time=template.event_time,
+            location=template.location,
+            created_by=creator_id,
+            price=template.price,
+            recurring_template_id=template.id,
+        )
+
+        is_kids = "дет" in template.title.lower() or "ребенок" in template.title.lower()
+        topic_id = get_topic_id_for_date(date_str, is_kids=is_kids)
+
+        text = await GroupMessageFormatter.format_group_event_message(event)
+        keyboard = GroupMessageFormatter.create_group_keyboard(event.id)
+
+        msg = await bot.send_message(
+            chat_id=config.group_id,
+            text=text,
+            message_thread_id=topic_id,
+            reply_markup=keyboard,
+            parse_mode="MarkdownV2",
+        )
+        await EventService.update_group_message_id(event.id, msg.message_id)
+        logger.info(f"✅ Немедленная публикация шаблона {template.id}: событие {event.id} на {date_str}")
+        return date_str
+    except Exception as e:
+        logger.error(f"❌ Ошибка немедленной публикации шаблона {template.id}: {e}")
+        return None
+
+
 async def _refresh_group_announcement(bot, event_id: int) -> None:
     """Обновить объявление события в группе после редактирования."""
     from services.event_service import EventService as _ES
@@ -296,78 +342,50 @@ async def admin_event_detail(callback: CallbackQuery):
         await callback.answer("❌ Событие не найдено", show_alert=True)
         return
 
-    # Форматируем основное сообщение о событии
-    message_text = await MessageFormatter.format_event_message(event)
+    booking_count = await BookingService.get_booking_count(event_id)
+    squares = "".join(
+        "🟩" if i < booking_count and booking_count >= 3 else "🟥" if i < booking_count else "⬜️"
+        for i in range(4)
+    )
 
-    # Получаем участников
+    lines = [
+        f"🔧 Управление событием\n",
+        f"🎾 {event.title}",
+        f"📅 {event.event_date}  🕐 {event.event_time}",
+        f"📍 {event.location}",
+        f"👥 {squares} ({booking_count}/4)",
+        f"💰 {event.price} злотых",
+    ]
+
     bookings = await BookingService.get_event_bookings(event_id)
-
     if bookings:
-        message_text += "\n\n👥 **Участники:**\n"
-
+        lines.append("\n👥 Участники:")
         for i, booking in enumerate(bookings, 1):
             user = await UserService.get_user_by_id(booking.user_id)
             if user:
-                # Формируем имя участника
-                name_parts = []
-
-                if user.first_name:
-                    # Экранируем специальные символы markdown
-                    first_name = (
-                        user.first_name.replace("*", "\\*")
-                        .replace("_", "\\_")
-                        .replace("`", "\\`")
-                    )
-                    name_parts.append(first_name)
-                if user.last_name:
-                    # Экранируем специальные символы markdown
-                    last_name = (
-                        user.last_name.replace("*", "\\*")
-                        .replace("_", "\\_")
-                        .replace("`", "\\`")
-                    )
-                    name_parts.append(last_name)
-
-                display_name = " ".join(name_parts) if name_parts else "Без имени"
-
-                # Добавляем username если есть (экранируем @)
+                name = " ".join(filter(None, [user.first_name, user.last_name])) or "Без имени"
                 if user.username:
-                    # username = user.username.replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
-                    username = user.username.replace("*", "\\*").replace("`", "\\`")
-                    display_name += f" (@{username})"
-
-                message_text += f"{i}. {display_name}\n"
+                    name += f" (@{user.username})"
+                lines.append(f"{i}. {name}")
             else:
-                message_text += f"{i}\\. Пользователь ID: {booking.user_id}\n"
-
-        total_income = len(bookings) * event.price
-        message_text += f"\n💰 Общий доход: {total_income} злотых"
+                lines.append(f"{i}. ID: {booking.user_id}")
+        lines.append(f"\n💰 Общий доход: {len(bookings) * event.price} злотых")
     else:
-        message_text += "\n\n👥 **Участники:** Пока никто не записался"
+        lines.append("\n👥 Пока никто не записался")
 
     builder = InlineKeyboardBuilder()
     builder.add(
-        InlineKeyboardButton(
-            text="✏️ Редактировать", callback_data=f"admin_edit_{event_id}"
-        ),
-        InlineKeyboardButton(
-            text="🗑 Удалить", callback_data=f"admin_delete_{event_id}"
-        ),
-        InlineKeyboardButton(
-            text="🔁 Переопубликовать", callback_data=f"republish_event_{event_id}"
-        ),
-        InlineKeyboardButton(
-            text="📱 Собрать в чате", callback_data=f"gather_chat_{event_id}"
-        ),
+        InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin_edit_{event_id}"),
+        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_delete_{event_id}"),
+        InlineKeyboardButton(text="🔁 Переопубликовать", callback_data=f"republish_event_{event_id}"),
+        InlineKeyboardButton(text="📱 Собрать в чате", callback_data=f"gather_chat_{event_id}"),
         InlineKeyboardButton(text="◀️ Назад", callback_data="admin_my_events"),
     )
     builder.adjust(2, 1, 1, 1)
 
-    clean_text = message_text.replace("**", "").replace("*", "").replace("`", "")
     try:
         await callback.message.edit_text(
-            f"🔧 Управление событием\n\n{clean_text}",
-            reply_markup=builder.as_markup(),
+            "\n".join(lines), reply_markup=builder.as_markup()
         )
     except Exception as e:
         logger.info(f"DEBUG: Ошибка при показе деталей события: {e}")
@@ -438,18 +456,14 @@ async def confirm_delete_event(callback: CallbackQuery):
         return
 
     keyboard = AdminKeyboards.confirm_delete(event_id)
-    try:
-        await callback.message.edit_text(
-            f"⚠️ **Подтверждение удаления**\n\n"
-            f"Вы уверены, что хотите удалить событие:\n"
-            f"**{event.title}**\n"
-            f"📅 {event.event_date} в {event.event_time}?\n\n"
-            f"❗️ Это действие нельзя отменить!",
-            reply_markup=keyboard,
-            parse_mode="MarkdownV2",
-        )
-    except Exception as e:
-        logger.info(f"DEBUG: Ошибка при подтверждении удаления: {e}")
+    await callback.message.edit_text(
+        f"⚠️ Подтверждение удаления\n\n"
+        f"Вы уверены, что хотите удалить событие:\n"
+        f"{event.title}\n"
+        f"📅 {event.event_date} в {event.event_time}?\n\n"
+        f"❗ Это действие нельзя отменить!",
+        reply_markup=keyboard,
+    )
 
 
 @router.callback_query(F.data.startswith("admin_confirm_delete_"))
@@ -1318,11 +1332,17 @@ async def recurring_process_location(callback: CallbackQuery, state: FSMContext)
         created_by=user.id,
     )
     day = config.weekday_names.get(str(template.weekday), "")
+
+    # Публикуем первое событие сразу — ближайший подходящий день (от завтра)
+    published_date = await _publish_recurring_event_now(callback.bot, template, user.id)
+    extra = f"\n📨 Первое событие опубликовано на {published_date}" if published_date else ""
+
     await callback.message.edit_text(
         f"✅ Шаблон создан!\n\n"
         f"🎾 {template.title}\n"
         f"📅 Каждый {day} в {template.event_time}\n"
-        f"📍 {template.location}\n\n"
+        f"📍 {template.location}\n"
+        f"{extra}\n\n"
         f"Тренировки будут создаваться автоматически каждую неделю.",
         reply_markup=AdminKeyboards.recurring_menu(),
     )
