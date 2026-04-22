@@ -113,6 +113,7 @@ class RecurringStates(StatesGroup):
     waiting_for_weekday = State()
     waiting_for_time = State()
     waiting_for_location = State()
+    waiting_for_price = State()
 
 
 class SettingsStates(StatesGroup):
@@ -215,10 +216,11 @@ async def show_admin_events(callback: CallbackQuery):
 
     try:
         await callback.message.edit_text(
-            "📋 Выберите дату:", reply_markup=builder.as_markup()
+            "📋 Выберите дату:", reply_markup=builder.as_markup(), parse_mode=None
         )
-    except Exception as e:
-        logger.info(f"DEBUG: Ошибка при показе дат: {e}")
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            logger.info(f"DEBUG: Ошибка при показе дат: {e}")
 
 
 @router.callback_query(F.data.regexp(r"^admin_date_\d{2}_\d{2}_\d{4}$"))
@@ -385,7 +387,7 @@ async def admin_event_detail(callback: CallbackQuery):
 
     try:
         await callback.message.edit_text(
-            "\n".join(lines), reply_markup=builder.as_markup()
+            "\n".join(lines), reply_markup=builder.as_markup(), parse_mode=None
         )
     except Exception as e:
         logger.info(f"DEBUG: Ошибка при показе деталей события: {e}")
@@ -1321,27 +1323,59 @@ async def recurring_process_location(callback: CallbackQuery, state: FSMContext)
 
     location = locations[location_id]
     data = await state.get_data()
+
+    await state.update_data(location=location)
+    await state.set_state(RecurringStates.waiting_for_price)
+
+    default_price = await ConfigService.get_default_price()
+
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_recurring"))
+    await callback.message.edit_text(
+        f"✅ Название: {data['title']}\n"
+        f"✅ День: {config.weekday_names.get(str(data['weekday']))}\n"
+        f"✅ Время: {data['event_time']}\n"
+        f"✅ Место: {location}\n\n"
+        f"💰 Введите цену тренировки (в злотых):\n"
+        f"(по умолчанию: {default_price} зл.)",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(RecurringStates.waiting_for_price)
+async def recurring_process_price(message: Message, state: FSMContext):
+    try:
+        price = int(message.text.strip())
+        if price < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите корректное число (например: 90)")
+        return
+
+    data = await state.get_data()
     await state.clear()
 
-    user = await UserService.get_or_create_user(callback.from_user.id)
+    user = await UserService.get_or_create_user(message.from_user.id)
     template = await RecurringService.create_template(
         title=data["title"],
         weekday=data["weekday"],
         event_time=data["event_time"],
-        location=location,
+        location=data["location"],
         created_by=user.id,
+        price=price,
     )
     day = config.weekday_names.get(str(template.weekday), "")
 
     # Публикуем первое событие сразу — ближайший подходящий день (от завтра)
-    published_date = await _publish_recurring_event_now(callback.bot, template, user.id)
+    published_date = await _publish_recurring_event_now(message.bot, template, user.id)
     extra = f"\n📨 Первое событие опубликовано на {published_date}" if published_date else ""
 
-    await callback.message.edit_text(
+    await message.answer(
         f"✅ Шаблон создан!\n\n"
         f"🎾 {template.title}\n"
         f"📅 Каждый {day} в {template.event_time}\n"
         f"📍 {template.location}\n"
+        f"💰 {price} злотых"
         f"{extra}\n\n"
         f"Тренировки будут создаваться автоматически каждую неделю.",
         reply_markup=AdminKeyboards.recurring_menu(),
