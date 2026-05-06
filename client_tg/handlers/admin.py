@@ -26,8 +26,8 @@ async def _publish_recurring_event_now(bot, template, creator_id: int) -> str | 
     """Создать и опубликовать первое событие по шаблону на ближайший подходящий день."""
     from datetime import date, timedelta
     try:
-        # Ближайшая дата с нужным днём недели начиная с завтра
-        start = date.today() + timedelta(days=1)
+        # Ближайшая дата с нужным днём недели не раньше чем через 7 дней
+        start = date.today() + timedelta(days=7)
         days_until = (template.weekday - start.weekday()) % 7
         next_date = start + timedelta(days=days_until)
         date_str = next_date.strftime("%d.%m.%Y")
