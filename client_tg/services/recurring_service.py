@@ -117,12 +117,11 @@ class RecurringService:
         templates = await RecurringService.get_templates()
         needing = []
         for tmpl in templates:
-            next_date = RecurringService.get_next_occurrence(tmpl.weekday)
-            date_str = next_date.strftime("%d.%m.%Y")
-            exists = await EventService.event_exists_for_template(tmpl.id, date_str)
-            if not exists:
+            has_upcoming = await EventService.has_upcoming_event_for_template(tmpl.id)
+            if not has_upcoming:
                 needing.append(tmpl)
+                next_date = RecurringService.get_next_occurrence(tmpl.weekday)
                 logger.debug(
-                    f"📅 Шаблон {tmpl.id} ({tmpl.title}) нуждается в событии на {date_str}"
+                    f"📅 Шаблон {tmpl.id} ({tmpl.title}) нуждается в событии на {next_date.strftime('%d.%m.%Y')}"
                 )
         return needing

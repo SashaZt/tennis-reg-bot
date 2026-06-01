@@ -1,0 +1,41 @@
+# --- Builder stage ---
+FROM python:3.12-slim AS builder
+
+# 1. Копируем бинарник uv из официального образа (это мгновенно и не утяжеляет сборку)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+WORKDIR /app
+COPY requirements.txt .
+
+# Установи системные зависимости для сборки (компиляция C-расширений)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Создаем venv и устанавливаем зависимости через uv
+# --compile делает предкомпиляцию в .pyc для более быстрого старта бота
+# --no-cache отключает кэш uv, так как в Docker-билде он нам не нужен
+RUN uv venv /venv && \
+    uv pip install --python /venv --compile --no-cache -r requirements.txt
+
+# --- Production stage ---
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Установи ТОЛЬКО runtime зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем готовое виртуальное окружение из builder
+COPY --from=builder /venv /venv
+
+# Делаем python из venv дефолтным
+ENV PATH="/venv/bin:$PATH"
+
+COPY . .
+
+CMD ["python", "main.py"]

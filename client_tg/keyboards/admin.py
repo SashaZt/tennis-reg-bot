@@ -10,18 +10,15 @@ class AdminKeyboards:
     def main_menu() -> InlineKeyboardMarkup:
         """Главное меню администратора"""
         builder = InlineKeyboardBuilder()
+        # Скрытые пункты (код сохранён):
+        # InlineKeyboardButton(text="➕ Создать событие", callback_data="admin_create_event"),
+        # InlineKeyboardButton(text="📋 Мои события", callback_data="admin_my_events"),
+        # InlineKeyboardButton(text="🔄 Повторяющиеся", callback_data="admin_recurring"),
+        # InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
         builder.add(
-            InlineKeyboardButton(
-                text="➕ Создать событие", callback_data="admin_create_event"
-            ),
-            InlineKeyboardButton(
-                text="📋 Мои события", callback_data="admin_my_events"
-            ),
-            InlineKeyboardButton(
-                text="🔄 Повторяющиеся", callback_data="admin_recurring"
-            ),
+            InlineKeyboardButton(text="📅 Расписание", callback_data="sched_menu"),
+            InlineKeyboardButton(text="📜 История", callback_data="admin_history_0"),
             InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings"),
-            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
         )
         builder.adjust(1)
         return builder.as_markup()
@@ -156,9 +153,10 @@ class AdminKeyboards:
     # ─── Настройки ───────────────────────────────────────────────────
 
     @staticmethod
-    def settings_menu(default_price: int, locations: dict) -> InlineKeyboardMarkup:
+    def settings_menu(default_price: int, locations: dict, recurring_enabled: bool = False) -> InlineKeyboardMarkup:
         """Главное меню настроек."""
         builder = InlineKeyboardBuilder()
+        recurring_label = "🔄 Повторяющиеся: ✅ ВКЛ" if recurring_enabled else "🔄 Повторяющиеся: ⛔ ВЫКЛ"
         builder.add(
             InlineKeyboardButton(
                 text=f"💰 Цена по умолч.: {default_price} зл.",
@@ -167,6 +165,10 @@ class AdminKeyboards:
             InlineKeyboardButton(
                 text=f"📍 Локации ({len(locations)})",
                 callback_data="settings_locations",
+            ),
+            InlineKeyboardButton(
+                text=recurring_label,
+                callback_data="settings_toggle_recurring",
             ),
             InlineKeyboardButton(text="◀️ Главное меню", callback_data="admin_main"),
         )

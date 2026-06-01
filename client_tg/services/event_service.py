@@ -232,3 +232,18 @@ class EventService:
             ) as cursor:
                 row = await cursor.fetchone()
                 return (row[0] if row else 0) > 0
+
+    @staticmethod
+    async def has_upcoming_event_for_template(template_id: int) -> bool:
+        """Проверить есть ли хоть одно активное будущее событие для шаблона (дата >= сегодня)."""
+        from datetime import date
+        today_key = date.today().strftime("%Y%m%d")
+        async with get_db() as db:
+            async with db.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE recurring_template_id = ? AND is_active = TRUE
+                   AND substr(event_date,7,4) || substr(event_date,4,2) || substr(event_date,1,2) >= ?""",
+                (template_id, today_key),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return (row[0] if row else 0) > 0

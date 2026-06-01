@@ -24,6 +24,12 @@ class SpecialTopicsConfig(BaseModel):
     """Конфигурация: special_topics"""
     kids: int
 
+class DbConfigConfig(BaseModel):
+    """Конфигурация: db_config"""
+    default_price: int
+    default_currency: str
+    locations: Dict[str, str]
+
 class ConfigConfig(BaseModel):
     """Конфигурация: config"""
     log: LogConfig
@@ -47,6 +53,7 @@ class ConfigConfig(BaseModel):
     weekday_names: Dict[str, str]
     locations: Dict[str, str]
     conditions_text: str
+    db_config: DbConfigConfig
 
 
 # ── Главный класс настроек ────────────────────────────────────────────
@@ -90,6 +97,7 @@ class Config(BaseSettings):
     weekday_names: Dict[str, str]
     locations: Dict[str, str]
     conditions_text: str
+    db_config: DbConfigConfig
 
 
 # Глобальный инстанс — бросит ValidationError при старте, если env не заполнен

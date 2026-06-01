@@ -83,6 +83,61 @@ async def init_database():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )"""),
+            ("training_history", """CREATE TABLE IF NOT EXISTS training_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                title TEXT NOT NULL,
+                event_date TEXT NOT NULL,
+                event_time TEXT NOT NULL,
+                location TEXT NOT NULL,
+                price INTEGER DEFAULT 90,
+                participant_count INTEGER DEFAULT 0,
+                participants TEXT NOT NULL,
+                is_recurring INTEGER DEFAULT 0,
+                archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""),
+            ("schedule_templates", """CREATE TABLE IF NOT EXISTS schedule_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                weekday INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                location TEXT NOT NULL,
+                price INTEGER DEFAULT 90,
+                max_participants INTEGER DEFAULT 4,
+                created_by INTEGER REFERENCES users(id),
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""),
+            ("schedule_template_slots", """CREATE TABLE IF NOT EXISTS schedule_template_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER REFERENCES schedule_templates(id),
+                slot_time TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE
+            )"""),
+            ("schedule_instances", """CREATE TABLE IF NOT EXISTS schedule_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER REFERENCES schedule_templates(id),
+                instance_date TEXT NOT NULL,
+                group_message_id INTEGER,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""),
+            ("schedule_slot_instances", """CREATE TABLE IF NOT EXISTS schedule_slot_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schedule_instance_id INTEGER REFERENCES schedule_instances(id),
+                slot_time TEXT NOT NULL,
+                max_participants INTEGER DEFAULT 4
+            )"""),
+            ("schedule_bookings", """CREATE TABLE IF NOT EXISTS schedule_bookings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot_instance_id INTEGER REFERENCES schedule_slot_instances(id),
+                user_id INTEGER REFERENCES users(id),
+                status TEXT CHECK(status IN ('registered','cancelled')) DEFAULT 'registered',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                cancelled_at TIMESTAMP,
+                UNIQUE(slot_instance_id, user_id)
+            )"""),
+            ("schedule_templates_is_kids", "ALTER TABLE schedule_templates ADD COLUMN is_kids BOOLEAN DEFAULT FALSE"),
+            ("schedule_bookings_reminder_sent", "ALTER TABLE schedule_bookings ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE"),
         ]
         for name, sql in migrations:
             try:

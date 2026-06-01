@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from keyboards.admin import AdminKeyboards
 from services.booking_service import BookingService
 from services.event_service import EventService
+from services.history_service import HistoryService
 from services.recurring_service import RecurringService
 from services.user_service import UserService
 from utils.formatters import MessageFormatter
@@ -1393,10 +1394,31 @@ async def admin_settings(callback: CallbackQuery):
     await callback.answer()
     default_price = await ConfigService.get_default_price()
     locations = await ConfigService.get_locations()
+    recurring_enabled = await ConfigService.get_recurring_enabled()
     await callback.message.edit_text(
         "⚙️ Настройки бота\n\nИзмените цену по умолчанию или управляйте локациями:",
-        reply_markup=AdminKeyboards.settings_menu(default_price, locations),
+        reply_markup=AdminKeyboards.settings_menu(default_price, locations, recurring_enabled),
     )
+
+
+@router.callback_query(F.data == "settings_toggle_recurring")
+async def settings_toggle_recurring(callback: CallbackQuery):
+    """Включить / выключить публикацию повторяющихся тренировок."""
+    await callback.answer()
+    current = await ConfigService.get_recurring_enabled()
+    new_value = not current
+    await ConfigService.set_recurring_enabled(new_value)
+
+    status = "✅ ВКЛ — события будут создаваться автоматически" if new_value else "⛔ ВЫКЛ — автосоздание событий остановлено"
+    default_price = await ConfigService.get_default_price()
+    locations = await ConfigService.get_locations()
+    try:
+        await callback.message.edit_text(
+            f"🔄 Повторяющиеся тренировки: {status}",
+            reply_markup=AdminKeyboards.settings_menu(default_price, locations, new_value),
+        )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "settings_edit_price")
@@ -1488,6 +1510,72 @@ async def settings_del_loc(callback: CallbackQuery):
         text,
         reply_markup=AdminKeyboards.locations_manage_menu(locations),
     )
+
+
+# ────────────────────────────────────────────────────────────────────
+#  ИСТОРИЯ ТРЕНИРОВОК
+# ────────────────────────────────────────────────────────────────────
+
+PAGE_SIZE = 5
+
+
+@router.callback_query(F.data.regexp(r"^admin_history_\d+$"))
+async def admin_history(callback: CallbackQuery):
+    """Показать историю завершённых тренировок с пагинацией."""
+    await callback.answer()
+
+    offset = int(callback.data.split("_")[2])
+    records = await HistoryService.get_recent_history(limit=PAGE_SIZE, offset=offset)
+    total = await HistoryService.get_history_count()
+
+    if not records and offset == 0:
+        builder = InlineKeyboardBuilder()
+        builder.add(InlineKeyboardButton(text="◀️ Главное меню", callback_data="admin_main"))
+        await callback.message.edit_text(
+            "📜 История тренировок\n\nЕщё нет завершённых тренировок с 3+ участниками.",
+            reply_markup=builder.as_markup(),
+        )
+        return
+
+    lines = [f"📜 История тренировок ({offset + 1}–{offset + len(records)} из {total})\n"]
+    for rec in records:
+        participant_parts = []
+        for p in rec["participants"]:
+            if p["username"]:
+                participant_parts.append(f"{p['name']} ({p['username']})")
+            else:
+                participant_parts.append(p["name"])
+
+        icon = "🔁" if rec["is_recurring"] else "📌"
+        total_income = rec["participant_count"] * rec["price"]
+        lines.append("─────────────────")
+        lines.append(f"{icon} {rec['event_date']}  {rec['event_time']} — {rec['title']}")
+        lines.append(f"📍 {rec['location']}")
+        lines.append(f"👥 {' · '.join(participant_parts)}")
+        lines.append(f"💰 {total_income} зл.  ({rec['participant_count']}/4)\n")
+
+    builder = InlineKeyboardBuilder()
+    nav_buttons = []
+    if offset > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_history_{offset - PAGE_SIZE}")
+        )
+    if offset + PAGE_SIZE < total:
+        nav_buttons.append(
+            InlineKeyboardButton(text="➡️ Ещё", callback_data=f"admin_history_{offset + PAGE_SIZE}")
+        )
+    if nav_buttons:
+        builder.add(*nav_buttons)
+        builder.adjust(len(nav_buttons))
+    builder.row(InlineKeyboardButton(text="◀️ Главное меню", callback_data="admin_main"))
+
+    try:
+        await callback.message.edit_text(
+            "\n".join(lines), reply_markup=builder.as_markup(), parse_mode=None
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
 
 
 # # DEBUG функция должна быть В САМОМ КОНЦЕ!

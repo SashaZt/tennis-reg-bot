@@ -59,11 +59,15 @@ class ConfigService:
         raw = await ConfigService.get_setting("locations")
         if raw:
             try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                pass
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    return data
+                logger.warning(f"⚙️ locations в БД не является dict: {type(data)}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Ошибка парсинга locations из БД: {e} | raw={raw!r}")
         from config import config
-        return dict(config.locations)  # fallback из config.json
+        logger.warning("⚙️ Используется fallback locations из config (env)")
+        return dict(config.locations)
 
     @staticmethod
     async def add_location(name: str) -> str:
@@ -86,6 +90,18 @@ class ConfigService:
         await ConfigService.set_setting("locations", json.dumps(locations, ensure_ascii=False))
         logger.info(f"🗑 Локация [{key}] '{name}' удалена")
         return True
+
+    # ─── Повторяющиеся тренировки ────────────────────────────────────
+
+    @staticmethod
+    async def get_recurring_enabled() -> bool:
+        raw = await ConfigService.get_setting("recurring_enabled")
+        return raw == "true"
+
+    @staticmethod
+    async def set_recurring_enabled(enabled: bool) -> None:
+        await ConfigService.set_setting("recurring_enabled", "true" if enabled else "false")
+        logger.info(f"🔄 Повторяющиеся тренировки → {'ВКЛ' if enabled else 'ВЫКЛ'}")
 
     # ─── Инициализация ───────────────────────────────────────────────
 

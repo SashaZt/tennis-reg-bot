@@ -52,6 +52,11 @@ class RecurringScheduler:
 
     async def _create_upcoming_events(self):
         """Создать события для шаблонов, которым нужны новые записи."""
+        from services.config_service import ConfigService
+        if not await ConfigService.get_recurring_enabled():
+            logger.info("🔄 RecurringScheduler: отключён администратором — пропуск")
+            return
+
         templates = await RecurringService.get_templates_needing_events()
 
         if not templates:
