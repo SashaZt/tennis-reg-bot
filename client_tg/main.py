@@ -62,7 +62,7 @@ async def main():
 
     try:
         logger.info("🚀 Бот запущен!")
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         updater.stop()
         recurring_scheduler.stop()

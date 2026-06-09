@@ -86,15 +86,24 @@ class ScheduleScheduler:
         if not past:
             logger.info("📅 ScheduleScheduler: нет прошедших расписаний для архивации")
         else:
-            logger.info(f"📅 ScheduleScheduler: архивируем {len(past)} расписаний")
+            logger.info(
+                f"📅 ScheduleScheduler: архивируем {len(past)} расписаний: "
+                + ", ".join(f"#{i['id']} {i['instance_date']} msg={i['group_message_id']}" for i in past)
+            )
             for inst in past:
-                await self._archive_instance(inst)
+                try:
+                    await self._archive_instance(inst)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка архивации инстанса #{inst['id']} {inst['instance_date']}: {e}")
 
         templates = await ScheduleService.get_templates()
         for tmpl in templates:
             has = await ScheduleService.has_upcoming_instance(tmpl["id"])
             if not has:
-                await self._create_and_publish(tmpl)
+                try:
+                    await self._create_and_publish(tmpl)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка публикации шаблона #{tmpl['id']}: {e}")
 
     async def _archive_instance(self, inst: dict):
         if inst["group_message_id"]:
@@ -103,9 +112,29 @@ class ScheduleScheduler:
                     chat_id=config.group_id,
                     message_id=inst["group_message_id"],
                 )
-                logger.info(f"🗑 Расписание {inst['instance_date']} удалено из TG")
+                logger.info(f"🗑 Расписание #{inst['id']} {inst['instance_date']} удалено из TG (msg_id={inst['group_message_id']})")
             except Exception as e:
-                logger.warning(f"⚠️ Не удалось удалить расписание {inst['id']} из TG: {e}")
+                err_str = str(e).lower()
+                if "not enough rights" in err_str or "rights" in err_str:
+                    logger.error(
+                        f"❌ НЕТ ПРАВ на удаление! Дай боту право 'Удалять сообщения' в группе. "
+                        f"Инстанс #{inst['id']} {inst['instance_date']} msg_id={inst['group_message_id']}"
+                    )
+                elif "message to delete not found" in err_str:
+                    logger.info(
+                        f"ℹ️ Сообщение уже удалено: инстанс #{inst['id']} {inst['instance_date']} "
+                        f"msg_id={inst['group_message_id']}"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ Не удалось удалить из TG: инстанс #{inst['id']} "
+                        f"{inst['instance_date']} msg_id={inst['group_message_id']} — {e}"
+                    )
+        else:
+            logger.warning(
+                f"⚠️ Инстанс #{inst['id']} {inst['instance_date']} не имеет group_message_id — "
+                f"TG-сообщение не будет удалено (возможно, публикация провалилась при создании)"
+            )
         await ScheduleService.deactivate_instance(inst["id"])
         logger.success(
             f"✅ Расписание архивировано: {inst['title'] or inst['weekday']} {inst['instance_date']}"
