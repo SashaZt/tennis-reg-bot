@@ -106,38 +106,50 @@ class ScheduleScheduler:
                     logger.error(f"❌ Ошибка публикации шаблона #{tmpl['id']}: {e}")
 
     async def _archive_instance(self, inst: dict):
+        """Delete TG post and deactivate DB record.
+
+        Only deactivates DB if TG deletion succeeded or message was already gone.
+        On transient errors, keeps DB active so the next rotation retries.
+        """
         if inst["group_message_id"]:
             try:
                 await self.bot.delete_message(
                     chat_id=config.group_id,
                     message_id=inst["group_message_id"],
                 )
-                logger.info(f"🗑 Расписание #{inst['id']} {inst['instance_date']} удалено из TG (msg_id={inst['group_message_id']})")
+                logger.info(
+                    f"🗑 #{inst['id']} {inst['instance_date']} удалено из TG "
+                    f"(msg_id={inst['group_message_id']})"
+                )
             except Exception as e:
                 err_str = str(e).lower()
-                if "not enough rights" in err_str or "rights" in err_str:
+                if "message to delete not found" in err_str or "message_id_invalid" in err_str:
+                    # Already gone — safe to deactivate
+                    logger.info(
+                        f"ℹ️ #{inst['id']} {inst['instance_date']} сообщение уже отсутствует в TG"
+                    )
+                elif "not enough rights" in err_str or "rights" in err_str:
+                    # Permissions issue — retrying won't help, deactivate but warn loudly
                     logger.error(
-                        f"❌ НЕТ ПРАВ на удаление! Дай боту право 'Удалять сообщения' в группе. "
+                        f"❌ НЕТ ПРАВ на удаление сообщений! Проверь права бота в группе. "
                         f"Инстанс #{inst['id']} {inst['instance_date']} msg_id={inst['group_message_id']}"
                     )
-                elif "message to delete not found" in err_str:
-                    logger.info(
-                        f"ℹ️ Сообщение уже удалено: инстанс #{inst['id']} {inst['instance_date']} "
-                        f"msg_id={inst['group_message_id']}"
-                    )
                 else:
+                    # Transient error — keep DB active, retry on next rotation
                     logger.warning(
-                        f"⚠️ Не удалось удалить из TG: инстанс #{inst['id']} "
-                        f"{inst['instance_date']} msg_id={inst['group_message_id']} — {e}"
+                        f"⚠️ #{inst['id']} {inst['instance_date']} msg_id={inst['group_message_id']} "
+                        f"не удалось удалить из TG (попробую завтра): {e}"
                     )
+                    return
         else:
             logger.warning(
-                f"⚠️ Инстанс #{inst['id']} {inst['instance_date']} не имеет group_message_id — "
-                f"TG-сообщение не будет удалено (возможно, публикация провалилась при создании)"
+                f"⚠️ #{inst['id']} {inst['instance_date']} — нет group_message_id, "
+                f"TG-пост не отслеживался"
             )
+
         await ScheduleService.deactivate_instance(inst["id"])
         logger.success(
-            f"✅ Расписание архивировано: {inst['title'] or inst['weekday']} {inst['instance_date']}"
+            f"✅ #{inst['id']} архивирован: {inst['title'] or inst['weekday']} {inst['instance_date']}"
         )
 
     async def _create_and_publish(self, tmpl: dict):
