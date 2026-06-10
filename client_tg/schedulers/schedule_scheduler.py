@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from aiogram import Bot
 from config import config, logger
 from services.schedule_service import ScheduleService
+from services import userbot as userbot_service
 from utils.get_data import get_topic_id_for_date
 from utils.schedule_formatters import ScheduleFormatter
 
@@ -108,49 +109,58 @@ class ScheduleScheduler:
     async def _archive_instance(self, inst: dict):
         """Delete TG post and deactivate DB record.
 
-        Only deactivates DB if TG deletion succeeded or message was already gone.
-        On transient errors, keeps DB active so the next rotation retries.
+        1. Tries Bot API delete_message.
+        2. If blocked (forum topic restriction) — falls back to Telethon userbot.
+        3. Only deactivates DB after confirmed TG cleanup.
         """
         if inst["group_message_id"]:
-            try:
-                await self.bot.delete_message(
-                    chat_id=config.group_id,
-                    message_id=inst["group_message_id"],
-                )
-                logger.info(
-                    f"🗑 #{inst['id']} {inst['instance_date']} удалено из TG "
-                    f"(msg_id={inst['group_message_id']})"
-                )
-            except Exception as e:
-                err_str = str(e).lower()
-                if "message to delete not found" in err_str or "message_id_invalid" in err_str:
-                    # Already gone — safe to deactivate
-                    logger.info(
-                        f"ℹ️ #{inst['id']} {inst['instance_date']} сообщение уже отсутствует в TG"
-                    )
-                elif "not enough rights" in err_str or "rights" in err_str:
-                    # Permissions issue — retrying won't help, deactivate but warn loudly
-                    logger.error(
-                        f"❌ НЕТ ПРАВ на удаление сообщений! Проверь права бота в группе. "
-                        f"Инстанс #{inst['id']} {inst['instance_date']} msg_id={inst['group_message_id']}"
-                    )
-                else:
-                    # Transient error — keep DB active, retry on next rotation
-                    logger.warning(
-                        f"⚠️ #{inst['id']} {inst['instance_date']} msg_id={inst['group_message_id']} "
-                        f"не удалось удалить из TG (попробую завтра): {e}"
-                    )
-                    return
+            tg_done = await self._delete_tg_message(
+                inst["group_message_id"], inst["id"], inst["instance_date"]
+            )
+            if not tg_done:
+                return  # retry tomorrow
         else:
             logger.warning(
-                f"⚠️ #{inst['id']} {inst['instance_date']} — нет group_message_id, "
-                f"TG-пост не отслеживался"
+                f"⚠️ #{inst['id']} {inst['instance_date']} — нет group_message_id"
             )
 
         await ScheduleService.deactivate_instance(inst["id"])
         logger.success(
             f"✅ #{inst['id']} архивирован: {inst['title'] or inst['weekday']} {inst['instance_date']}"
         )
+
+    async def _delete_tg_message(self, message_id: int, inst_id: int, inst_date: str) -> bool:
+        """Try Bot API first, fall back to Telethon userbot. Returns True if message is gone."""
+        # 1. Bot API
+        try:
+            await self.bot.delete_message(
+                chat_id=config.group_id,
+                message_id=message_id,
+            )
+            logger.info(f"🗑 #{inst_id} {inst_date} удалено ботом (msg_id={message_id})")
+            return True
+        except Exception as e:
+            err_str = str(e).lower()
+            if "message to delete not found" in err_str or "message_id_invalid" in err_str:
+                logger.info(f"ℹ️ #{inst_id} {inst_date} — сообщение уже отсутствует в TG")
+                return True
+            bot_api_error = e
+
+        # 2. Telethon userbot fallback
+        logger.info(
+            f"ℹ️ #{inst_id} Bot API не смог удалить msg_id={message_id} ({bot_api_error}), "
+            f"пробую через юзербот..."
+        )
+        deleted = await userbot_service.delete_message(config.group_id, message_id)
+        if deleted:
+            logger.info(f"🗑 #{inst_id} {inst_date} удалено через юзербот (msg_id={message_id})")
+            return True
+
+        logger.warning(
+            f"⚠️ #{inst_id} {inst_date} msg_id={message_id} — "
+            f"ни бот, ни юзербот не смогли удалить, повтор завтра"
+        )
+        return False
 
     async def _create_and_publish(self, tmpl: dict):
         next_date = self._next_occurrence(tmpl["weekday"])
