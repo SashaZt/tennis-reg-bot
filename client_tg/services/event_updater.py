@@ -86,9 +86,9 @@ class SimpleEventUpdater:
                 or "message not found" in error_msg
             ):
                 logger.warning(
-                    f"⚠️ Сообщение события {event.id} не найдено в ТГ - пропускаем"
+                    f"⚠️ Сообщение события {event.id} не найдено в ТГ - деактивирую событие в БД"
                 )
-                # НЕ очищаем БД, НЕ создаем новое - просто пропускаем
+                await self.deactivate_orphaned_event(event)
                 return False
 
             elif "flood control" in error_msg or "too many requests" in error_msg:
@@ -98,6 +98,27 @@ class SimpleEventUpdater:
             else:
                 logger.error(f"❌ Ошибка обновления события {event.id}: {e}")
                 return False
+
+    async def deactivate_orphaned_event(self, event: Event):
+        """Деактивировать событие, чьё сообщение удалено из ТГ, и отменить его записи"""
+        from database.connection import get_db
+
+        async with get_db() as db:
+            cursor = await db.execute(
+                """UPDATE bookings SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP
+                   WHERE event_id = ? AND status = 'registered'""",
+                (event.id,),
+            )
+            cancelled = cursor.rowcount
+            await db.execute(
+                "UPDATE events SET is_active = FALSE WHERE id = ?", (event.id,)
+            )
+            await db.commit()
+
+        logger.info(
+            f"🗑 Событие {event.id} ({event.title} {event.event_date}) деактивировано: "
+            f"сообщения нет в ТГ, отменено записей: {cancelled}"
+        )
 
     async def update_all_events(self):
         """Обновить все события (только существующие в ТГ)"""

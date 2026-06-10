@@ -19,6 +19,7 @@ services:
       - .env
     volumes:
       - /root/tennis-reg-bot/data:/app/data
+      - /root/tennis-reg-bot/log:/app/log
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     networks:
       - app_network
