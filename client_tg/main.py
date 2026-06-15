@@ -10,7 +10,6 @@ from services.config_service import ConfigService
 # Импортируем только нужные обработчики
 from handlers import admin, callback, group, user, schedule_admin, schedule_callbacks
 from schedulers.cleanup_scheduler import CleanupScheduler
-from schedulers.recurring_scheduler import RecurringScheduler
 from schedulers.schedule_scheduler import ScheduleScheduler
 
 # Для обновления событий
@@ -38,7 +37,6 @@ async def main():
 
     # Для автообновления
     updater = SimpleEventUpdater(bot)
-    recurring_scheduler = RecurringScheduler(bot)
     cleanup_scheduler = CleanupScheduler(bot)
     schedule_scheduler = ScheduleScheduler(bot)
 
@@ -54,9 +52,8 @@ async def main():
 
     logger.info("Роутеры подключены, бот запускается...")
 
-    # Запускаем автообновление, планировщики повторяющихся событий и архивации
+    # Запускаем автообновление, планировщик расписания и архивации
     updater_task = updater.start()
-    recurring_task = recurring_scheduler.start()
     cleanup_task = cleanup_scheduler.start()
     schedule_task = schedule_scheduler.start()
 
@@ -65,10 +62,9 @@ async def main():
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         updater.stop()
-        recurring_scheduler.stop()
         cleanup_scheduler.stop()
         schedule_scheduler.stop()
-        for task in (updater_task, recurring_task, cleanup_task, schedule_task):
+        for task in (updater_task, cleanup_task, schedule_task):
             if task:
                 task.cancel()
 
